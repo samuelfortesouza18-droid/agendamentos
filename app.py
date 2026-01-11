@@ -210,35 +210,52 @@ def cliente():
     con = get_db()
     cur = con.cursor()
 
+    # horários cadastrados
     horas = cur.execute(
         "SELECT hora FROM horarios WHERE user_id=1"
     ).fetchall()
 
-    if request.method == 'POST':
-        con.execute("""
-            INSERT INTO agendamentos (cliente, data, hora, user_id)
-            VALUES (?,?,?,1)
-        """, (
-            request.form['cliente'],
-            request.form['data'],
-            request.form['hora']
-        ))
-        con.commit()
+    erro = None
 
-        return render_template_string(base, title="Agendado", content="""
-        <div class="card p-4 text-center">
-            <h3>Horário agendado com sucesso ✅</h3>
-        </div>
-        """)
+    if request.method == 'POST':
+        cliente_nome = request.form['cliente']
+        data = request.form['data']
+        hora = request.form['hora']
+
+        # 🔒 VERIFICA SE JÁ EXISTE AGENDAMENTO
+        existe = cur.execute("""
+            SELECT id FROM agendamentos
+            WHERE data=? AND hora=? AND user_id=1
+        """, (data, hora)).fetchone()
+
+        if existe:
+            erro = "⚠️ Esse horário já está ocupado. Escolha outro."
+        else:
+            con.execute("""
+                INSERT INTO agendamentos (cliente, data, hora, user_id)
+                VALUES (?,?,?,1)
+            """, (cliente_nome, data, hora))
+            con.commit()
+
+            return render_template_string(base, title="Agendado", content="""
+            <div class="card p-4 text-center">
+                <h3>Horário agendado com sucesso ✅</h3>
+            </div>
+            """)
 
     options = "".join([f"<option>{h[0]}</option>" for h in horas])
+
+    alerta = f"<div class='alert alert-danger'>{erro}</div>" if erro else ""
 
     return render_template_string(base, title="Agendar", content=f"""
     <form method="post" class="card p-4 col-md-4 mx-auto">
         <h4 class="text-center">Agendar horário</h4>
+        {alerta}
         <input name="cliente" class="form-control mb-2" placeholder="Seu nome" required>
         <input type="date" name="data" class="form-control mb-2" required>
-        <select name="hora" class="form-control mb-3">{options}</select>
+        <select name="hora" class="form-control mb-3" required>
+            {options}
+        </select>
         <button class="btn btn-success w-100">Agendar</button>
     </form>
     """)
