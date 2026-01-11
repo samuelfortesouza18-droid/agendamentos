@@ -2,6 +2,7 @@ from flask import Flask, render_template_string, request, redirect, session
 import sqlite3
 from collections import Counter
 from urllib.parse import quote_plus
+from datetime import datetime
 
 # ================== APP ==================
 app = Flask(__name__)
@@ -35,11 +36,9 @@ with get_db() as con:
     );
     """)
 
-    existe = con.execute(
-        "SELECT id FROM usuarios WHERE usuario='samuka'"
-    ).fetchone()
-
-    if not existe:
+    if not con.execute(
+        "SELECT 1 FROM usuarios WHERE usuario='samuka'"
+    ).fetchone():
         con.execute(
             "INSERT INTO usuarios (usuario, senha) VALUES ('samuka','123')"
         )
@@ -79,13 +78,10 @@ body { background:#000; color:#fff; }
 @app.route('/', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        u = request.form['usuario']
-        s = request.form['senha']
-
         cur = get_db().cursor()
         user = cur.execute(
             "SELECT id FROM usuarios WHERE usuario=? AND senha=?",
-            (u, s)
+            (request.form['usuario'], request.form['senha'])
         ).fetchone()
 
         if user:
@@ -113,20 +109,40 @@ def dashboard():
         (session['user'],)
     ).fetchall()
 
-    cont = Counter([d[0] for d in dados])
-    cards = ""
+    cont = Counter()
+    dias = {}
 
-    for dia, qtd in cont.items():
+    traducao = {
+        "Monday": "Segunda-feira",
+        "Tuesday": "Terça-feira",
+        "Wednesday": "Quarta-feira",
+        "Thursday": "Quinta-feira",
+        "Friday": "Sexta-feira",
+        "Saturday": "Sábado",
+        "Sunday": "Domingo"
+    }
+
+    for d in dados:
+        data = d[0]
+        nome = traducao.get(
+            datetime.strptime(data, "%Y-%m-%d").strftime("%A"),
+            ""
+        )
+        cont[data] += 1
+        dias[data] = nome
+
+    cards = ""
+    for data, qtd in cont.items():
         cards += f"""
         <div class="col card p-3 text-center">
-            {dia}<br><b>{qtd}</b> horários
+            <b>{dias[data]}</b><br>{data}<br>
+            <span class="text-success">{qtd} horários</span>
         </div>
         """
 
     return render_template_string(base, title="Painel", content=f"""
     <div class="row g-3 mb-4">{cards}</div>
     <div class="row g-3">
-        <a class="btn btn-success col" href="/agendar">Novo Horário</a>
         <a class="btn btn-warning col" href="/horarios">Horários</a>
         <a class="btn btn-info col" href="/agenda">Agenda</a>
     </div>
@@ -151,15 +167,19 @@ def horarios():
         (session['user'],)
     ).fetchall()
 
-    lista = "".join([
+    lista = "".join(
         f"<li class='list-group-item bg-dark text-white'>{h[0]}</li>"
         for h in hrs
-    ])
+    )
 
     return render_template_string(base, title="Horários", content=f"""
     <form method="post" class="card p-3 mb-3">
         <input type="time" name="hora" class="form-control mb-2" required>
-        <button class="btn btn-success">Adicionar</button>
+        <button class="btn btn-success w-100 mb-2">Adicionar</button>
+        <a href="/limpar_horarios" class="btn btn-danger w-100"
+           onclick="return confirm('Apagar todos os horários?')">
+           Limpar Horários
+        </a>
     </form>
     <ul class="list-group">{lista}</ul>
     """)
@@ -178,7 +198,9 @@ def agenda():
 
     rows = ""
     for a in ag:
-        msg = quote_plus(f"Olá {a[1]}, seu horário está marcado para {a[2]} às {a[3]}")
+        msg = quote_plus(
+            f"Olá {a[1]}, seu horário está marcado para {a[2]} às {a[3]}"
+        )
         rows += f"""
         <tr>
             <td>{a[1]}</td>
@@ -194,23 +216,17 @@ def agenda():
 
     return render_template_string(base, title="Agenda", content=f"""
     <table class="table table-dark table-striped">
-        <tr>
-            <th>Cliente</th>
-            <th>Data</th>
-            <th>Hora</th>
-            <th>Ações</th>
-        </tr>
+        <tr><th>Cliente</th><th>Data</th><th>Hora</th><th>Ações</th></tr>
         {rows}
     </table>
     """)
 
-# ================== CLIENTE (LINK PÚBLICO) ==================
+# ================== CLIENTE ==================
 @app.route('/cliente', methods=['GET', 'POST'])
 def cliente():
     con = get_db()
     cur = con.cursor()
 
-    # horários cadastrados
     horas = cur.execute(
         "SELECT hora FROM horarios WHERE user_id=1"
     ).fetchall()
@@ -218,56 +234,48 @@ def cliente():
     erro = None
 
     if request.method == 'POST':
-        cliente_nome = request.form['cliente']
-        data = request.form['data']
-        hora = request.form['hora']
-
-        # 🔒 VERIFICA SE JÁ EXISTE AGENDAMENTO
-        existe = cur.execute("""
-            SELECT id FROM agendamentos
-            WHERE data=? AND hora=? AND user_id=1
-        """, (data, hora)).fetchone()
+        existe = cur.execute(
+            "SELECT 1 FROM agendamentos WHERE data=? AND hora=? AND user_id=1",
+            (request.form['data'], request.form['hora'])
+        ).fetchone()
 
         if existe:
-            erro = "⚠️ Esse horário já está ocupado. Escolha outro."
+            erro = "⚠️ Horário ocupado"
         else:
-            con.execute("""
-                INSERT INTO agendamentos (cliente, data, hora, user_id)
-                VALUES (?,?,?,1)
-            """, (cliente_nome, data, hora))
+            con.execute(
+                "INSERT INTO agendamentos (cliente,data,hora,user_id) VALUES (?,?,?,1)",
+                (request.form['cliente'], request.form['data'], request.form['hora'])
+            )
             con.commit()
+            return "<h2 style='color:white;text-align:center'>Agendado com sucesso ✅</h2>"
 
-            return render_template_string(base, title="Agendado", content="""
-            <div class="card p-4 text-center">
-                <h3>Horário agendado com sucesso ✅</h3>
-            </div>
-            """)
-
-    options = "".join([f"<option>{h[0]}</option>" for h in horas])
-
+    options = "".join(f"<option>{h[0]}</option>" for h in horas)
     alerta = f"<div class='alert alert-danger'>{erro}</div>" if erro else ""
 
     return render_template_string(base, title="Agendar", content=f"""
     <form method="post" class="card p-4 col-md-4 mx-auto">
-        <h4 class="text-center">Agendar horário</h4>
+        <h4 class="text-center">Agendar</h4>
         {alerta}
         <input name="cliente" class="form-control mb-2" placeholder="Seu nome" required>
         <input type="date" name="data" class="form-control mb-2" required>
-        <select name="hora" class="form-control mb-3" required>
-            {options}
-        </select>
+        <select name="hora" class="form-control mb-3" required>{options}</select>
         <button class="btn btn-success w-100">Agendar</button>
     </form>
     """)
 
-# ================== CANCELAR ==================
+# ================== AÇÕES ==================
 @app.route('/cancelar/<int:id>')
 def cancelar(id):
     with get_db() as con:
         con.execute("DELETE FROM agendamentos WHERE id=?", (id,))
     return redirect('/agenda')
 
-# ================== LOGOUT ==================
+@app.route('/limpar_horarios')
+def limpar_horarios():
+    with get_db() as con:
+        con.execute("DELETE FROM horarios WHERE user_id=?", (session['user'],))
+    return redirect('/horarios')
+
 @app.route('/logout')
 def logout():
     session.clear()
